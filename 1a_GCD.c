@@ -1,5 +1,4 @@
 /*C Program to find GCD of two numbers using Euclid's algorthm, Modified Euclid's algorithm and Consecutive Integer Checking method technique*/
-
 #include<stdio.h>
 #include<stdlib.h>
 #include<time.h>
