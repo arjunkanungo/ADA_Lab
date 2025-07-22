@@ -1,204 +1,155 @@
-#include<stdio.h>
-#include<stdlib.h>
-#include<time.h>
-#define x 4
-#define y 20
-int n;int c;
-int count;
-struct stack{
-    int arr[20];
-    int top;
-};
-typedef struct stack stack;
-void push(stack *s,int data){
-    s->arr[++s->top]=data;
-}
-int isempty(stack*s){
-    if(s->top==-1){
-        return 1;
-    }
-    else{
-        return 0;
-    }
-}
-int pop(stack* s){
-        return s->arr[s->top--];
-}
-void dfs(int v,int n,int mat[][n],int vis[],stack * s){
-    for(int i=0;i<n;i++){
-        count++;
-        if(mat[v][i]==1 && vis[i]==0){
-            vis[i]=1;
-            dfs(i,n,mat,vis,s);
-        }
-    }
-    push(s,v);
-}
-void dfsmain(){
-    FILE *a;FILE *b;
-    a=fopen("output.txt","a");
-    b=fopen("result.txt","a");
-    int tm=0;
-    srand(time(NULL));
-    for(int j=2;j<20;j++){
-        stack s;
-        s.top=-1;
-        n=j;tm=0;
-        int arr[n][n];
-        int isvis[n];
-        for(int i=0;i<n;i++){
-            for(int j=0;j<n;j++){
-                arr[i][j]=0;
-            }
-        }
-            for(int i=1;i<n;i++){
-                arr[i-1][i]=1;
-            }
-        int vis[n];
-        for(int i=0;i<n;i++){
-            vis[i]=0;
-        }
-            count=0;
-        for(int i=0;i<n;i++){
-            if(vis[i]==0){
-                vis[i]=1;
-                dfs(i,n,arr,vis,&s);
-            }
-        }
-        fprintf(a,"%d\t%d\n",j,count);
-        while(!isempty(&s)){
-            int r=pop(&s);
-            fprintf(b,"%d ",r);
-        }
-        fprintf(b,"\n");
-    }
-    fclose(a);
-}
-int main(){
-    system("rm -r *.txt");
-    dfsmain();
-}
-
-
-
-import os
-from docx import Document
+import openpyxl
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
-from io import BytesIO
+from openpyxl.utils import column_index_from_string
+import math
 
-# Constants
-SLIDE_WIDTH = Inches(10)
-SLIDE_HEIGHT = Inches(5.625)
-LEFT_MARGIN = Inches(0.5)
-TOP_MARGIN = Inches(0.5)
-TABLE_WIDTH = SLIDE_WIDTH - 2 * LEFT_MARGIN
-DEFAULT_FONT_NAME = 'Times New Roman'
-DEFAULT_FONT_SIZE = Pt(14)
-MAX_ROWS_PER_SLIDE = 6  # Split large tables for readability
-
-
-def convert_docx_tables_to_pptx(docx_path: str, pptx_path: str):
+def get_dynamic_font_size(row_count):
     """
-    Converts all tables from a DOCX file into a PPTX presentation.
-    Merged cells are flattened. Images are placed near the corresponding table row.
+    Calculates a dynamic font size based on the number of rows on a slide.
+    """
+    if row_count <= 15:
+        return Pt(12)  # Large font for few rows
+    elif row_count <= 25:
+        return Pt(10)  # Standard font for medium rows
+    else:
+        return Pt(8)   # Small font for many rows
+
+def get_excel_data_and_merges(worksheet):
+    """
+    Reads data and merge information, creating maps for coordinate translation.
+    """
+    data = []
+    hidden_rows = {r for r, dim in worksheet.row_dimensions.items() if dim.hidden}
+    hidden_cols_indices = {column_index_from_string(c) for c, dim in worksheet.column_dimensions.items() if dim.hidden}
+
+    row_map = {excel_row: ppt_row for ppt_row, excel_row in enumerate(
+               r for r in range(1, worksheet.max_row + 1) if r not in hidden_rows)}
+    col_map = {excel_col: ppt_col for ppt_col, excel_col in enumerate(
+               c for c in range(1, worksheet.max_column + 1) if c not in hidden_cols_indices)}
+
+    for excel_row_idx in sorted(row_map.keys()):
+        row_data = [str(worksheet.cell(row=excel_row_idx, column=excel_col_idx).value or "")
+                    for excel_col_idx in sorted(col_map.keys())]
+        data.append(row_data)
+
+    ppt_merges = []
+    for merged_range in worksheet.merged_cells.ranges:
+        min_col, min_row, max_col, max_row = merged_range.bounds
+        if min_row in row_map and max_row in row_map and min_col in col_map and max_col in col_map:
+            if not (row_map[min_row] == row_map[max_row] and col_map[min_col] == col_map[max_col]):
+                ppt_merges.append({
+                    "start_row": row_map[min_row], "start_col": col_map[min_col],
+                    "end_row": row_map[max_row], "end_col": col_map[max_col]
+                })
+
+    return data, ppt_merges
+
+def create_ppt_from_excel(excel_path, ppt_path):
+    """
+    Creates a PowerPoint presentation, handling pagination and dynamic font sizes.
     """
     try:
-        doc = Document(docx_path)
-    except Exception as e:
-        print(f"Failed to load DOCX: {e}")
+        workbook = openpyxl.load_workbook(excel_path, data_only=True)
+        worksheet = workbook.active
+    except FileNotFoundError:
+        print(f"Error: The file '{excel_path}' was not found.")
+        return
+
+    table_data, ppt_merges = get_excel_data_and_merges(worksheet)
+    if not table_data:
+        print("No visible data found to convert.")
         return
 
     prs = Presentation()
-    blank_slide = prs.slide_layouts[6]
+    slide_layout = prs.slide_layouts[6]  # Blank layout
+    
+    header_row = table_data[0]
+    data_rows = table_data[1:]
+    num_cols = len(header_row)
+    
+    MAX_ROWS_PER_SLIDE = 20  # Set the maximum number of rows per slide (including header)
+    
+    data_chunks = [data_rows[i:i + MAX_ROWS_PER_SLIDE - 1] 
+                   for i in range(0, len(data_rows), MAX_ROWS_PER_SLIDE - 1)]
 
-    for table in doc.tables:
-        if not any(any(cell.text.strip() for cell in row.cells) for row in table.rows):
-            continue  # skip empty table
+    original_row_offset = 0
+    for chunk in data_chunks:
+        slide = prs.slides.add_slide(slide_layout)
+        
+        slide_table_data = [header_row] + chunk
+        num_rows_for_slide = len(slide_table_data)
+        font_size = get_dynamic_font_size(num_rows_for_slide)
 
-        flat_rows = []
-        image_map = []
-        max_cols = max(len(row.cells) for row in table.rows)
+        left, top, width, height = Inches(0.5), Inches(0.5), Inches(9.0), Inches(0.5 * num_rows_for_slide)
+        shape = slide.shapes.add_table(num_rows_for_slide, num_cols, left, top, width, height)
+        table = shape.table
 
-        for row in table.rows:
-            texts = []
-            images = []
-            for cell in row.cells:
-                text = '\n'.join(p.text.strip() for p in cell.paragraphs if p.text.strip())
-                texts.append(text if text else "")
-                images.append(extract_image_from_cell(cell))
-            while len(texts) < max_cols:
-                texts.append("")
-                images.append(None)
-            flat_rows.append(texts)
-            image_map.append(images)
+        try:
+            col_width = int(width / num_cols)
+            for i in range(num_cols):
+                table.columns[i].width = col_width
+        except ZeroDivisionError: pass
 
-        # Split into chunks
-        for i in range(0, len(flat_rows), MAX_ROWS_PER_SLIDE):
-            chunk = flat_rows[i:i + MAX_ROWS_PER_SLIDE]
-            img_chunk = image_map[i:i + MAX_ROWS_PER_SLIDE]
-            slide = prs.slides.add_slide(blank_slide)
+        for r_idx, row_data in enumerate(slide_table_data):
+            for c_idx, cell_data in enumerate(row_data):
+                cell = table.cell(r_idx, c_idx)
+                cell.text = cell_data
+                p = cell.text_frame.paragraphs[0]
+                p.font.size = font_size
+                p.alignment = PP_ALIGN.LEFT
+        
+        # --- Handle merges for the current slide ---
+        for merge in ppt_merges:
+            # Check if the merge is relevant for the current chunk of data
+            merge_start_in_chunk = merge["start_row"] - original_row_offset
+            merge_end_in_chunk = merge["end_row"] - original_row_offset
+            
+            # The merge must start within the visible data rows of this slide (row 1 onwards)
+            if 0 < merge_start_in_chunk < num_rows_for_slide:
+                # Adjust coordinates to be relative to the slide's table
+                final_start_row = merge_start_in_chunk
+                final_end_row = min(merge_end_in_chunk, num_rows_for_slide - 1)
+                
+                start_cell = table.cell(final_start_row, merge["start_col"])
+                end_cell = table.cell(final_end_row, merge["end_col"])
+                start_cell.merge(end_cell)
 
-            rows = len(chunk)
-            cols = max_cols
+        original_row_offset += len(chunk)
 
-            table_shape = slide.shapes.add_table(
-                rows, cols,
-                LEFT_MARGIN, TOP_MARGIN,
-                TABLE_WIDTH, SLIDE_HEIGHT - 2 * TOP_MARGIN
-            )
-            pptx_table = table_shape.table
+    prs.save(ppt_path)
+    print(f"Presentation with {len(prs.slides)} slide(s) saved to '{ppt_path}'.")
 
-            for r in range(rows):
-                for c in range(cols):
-                    cell = pptx_table.cell(r, c)
-                    tf = cell.text_frame
-                    tf.clear()
-                    p = tf.paragraphs[0]
-                    run = p.add_run()
-                    run.text = chunk[r][c]
-                    run.font.name = DEFAULT_FONT_NAME
-                    run.font.size = DEFAULT_FONT_SIZE
-                    p.alignment = PP_ALIGN.LEFT
-
-                    img_data = img_chunk[r][c]
-                    if img_data:
-                        try:
-                            left = LEFT_MARGIN + Inches(0.1) + (c * (TABLE_WIDTH / cols))
-                            top = TOP_MARGIN + (r + 1) * ((SLIDE_HEIGHT - TOP_MARGIN) / (MAX_ROWS_PER_SLIDE + 1)) - Inches(0.4)
-                            slide.shapes.add_picture(BytesIO(img_data), left, top, width=Inches(1.0))
-                        except Exception as e:
-                            print(f"Image insert failed: {e}")
-
-    try:
-        prs.save(pptx_path)
-        print(f"Saved: {pptx_path}")
-    except Exception as e:
-        print(f"Save failed: {e}")
-
-
-def extract_image_from_cell(cell):
+def create_long_sample_excel(filename='SampleEdgeCaseExcel_Long.xlsx'):
     """
-    Extracts the first image from a DOCX cell, if any.
-    Returns image as bytes or None.
+    Creates a long sample Excel file to test pagination.
     """
-    for para in cell.paragraphs:
-        for run in para.runs:
-            if run._element.xpath('.//pic:pic'):
-                for blip in run._element.xpath('.//a:blip'):
-                    rId = blip.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
-                    part = run.part.related_parts.get(rId)
-                    if part:
-                        return part.blob
-    return None
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Pagination_Test"
+
+    header = ["ID", "Product", "Category", "Sales", "Notes"]
+    ws.append(header)
+    
+    for i in range(1, 41):
+        ws.append([i, f"Product-{i:02d}", f"Category-{(i % 5) + 1}", 100 + i * 5, f"Note for product {i}"])
+
+    # Add a merge that will span across a slide break
+    ws.merge_cells('E25:E28')
+    ws.cell(row=25, column=5).value = "This merge crosses a slide boundary"
+
+    # Add a merge fully contained on the second slide
+    ws.merge_cells('E35:E36')
+    ws.cell(row=35, column=5).value = "Merge on second slide"
+
+    wb.save(filename)
+    print(f"Long sample Excel file '{filename}' created.")
 
 
-if __name__ == "__main__":
-    input_docx = "docx_table_boundary_test.docx"  # Replace with actual path if needed
-    output_pptx = "converted_tables_clean.pptx"
+# --- Execution ---
+excel_filename = 'SampleEdgeCaseExcel_Long.xlsx'
+ppt_filename = 'OutputPresentation_Paged.pptx'
 
-    if not os.path.exists(input_docx):
-        print(f"File not found: {input_docx}")
-    else:
-        convert_docx_tables_to_pptx(input_docx, output_pptx)
+# create_long_sample_excel(excel_filename)
+create_ppt_from_excel(excel_filename, ppt_filename)
